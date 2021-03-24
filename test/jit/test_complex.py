@@ -59,18 +59,18 @@ class TestComplex(JitTestCase):
 
         self.checkScript(fn, (t1, t2, 2))
 
-    def test_complex_math_ops(self):
+    def test_complex_constants_and_ops(self):
         vals = ([0.0, 1.0, 2.2, -1.0, -0.0, -2.2, 1, 0, 2]
                 + [10.0 ** i for i in range(2)] + [-(10.0 ** i) for i in range(2)])
         complex_vals = tuple(complex(x, y) for x, y in product(vals, vals))
 
-        def checkMath(func_name):
-            funcs_template = dedent('''
+        funcs_template = dedent('''
             def func(a: complex):
-                return cmath.{func}(a)
+                return cmath.{func_or_const}(a)
             ''')
 
-            funcs_str = funcs_template.format(func=func_name)
+        def checkCmath(func_name, funcs_template=funcs_template):
+            funcs_str = funcs_template.format(func_or_const=func_name)
             scope = {}
             execWrapper(funcs_str, globals(), scope)
             cu = torch.jit.CompilationUnit(funcs_str)
@@ -102,10 +102,19 @@ class TestComplex(JitTestCase):
 
         # --- Unary ops ---
         for op in unary_ops:
-            checkMath(op)
+            checkCmath(op)
 
         def fn(x: complex):
             return abs(x)
 
         for val in complex_vals:
             self.checkScript(fn, (val, ))
+
+        func_constants_template = dedent('''
+            def func():
+                return cmath.{func_or_const}
+            ''')
+        float_consts = ['pi', 'e', 'tau', 'inf', 'nan']
+        complex_consts = ['infj', 'nanj']
+        for x in (float_consts + complex_consts):
+            checkCmath(x, funcs_template=func_constants_template)
