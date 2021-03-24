@@ -790,6 +790,19 @@ public:
   /// Returns true if this `Variable` is a view of another `Variable`.
   bool is_view() const;
 
+  bool is_leaf() const;
+
+  int64_t output_nr() const;
+
+
+  void set_data(const Tensor & new_data);
+
+  Tensor data() const;
+
+  int64_t _version() const;
+
+  void retain_grad();
+
   /// Returns the `Variable` that this `Variable` is a view of. If this
   /// `Variable` is not a view, throw a `std::runtime_error`.
   const Tensor& _base() const;
