@@ -36,6 +36,9 @@ class Derivative:
     #         here: `mul_tensor_backward(grad, self, other_scalar_type)`
     formula: str
 
+    # The formula string before input argument replacement
+    original_formula: str
+
     # Names of the arguments for which this formula calculates derivatives.
     var_names: Tuple[str, ...]
 
@@ -44,6 +47,29 @@ class Derivative:
 
     # Saved outputs that are referenced by the formula.
     saved_outputs: Tuple[SavedAttribute, ...]
+
+# Represents a forward formula that calculates forward derivatives
+# for one tensor.
+@dataclass(frozen=True)
+class ForwardDerivative:
+    # The formula string (legit C++ expression).
+    # Note that special keywords such as "linear" or "element_wise" have been
+    # replaced by the automatically generated formula.
+    formula: str
+
+    # Name of the output argument for which this formula calculates forward
+    # derivatives
+    var_name: str
+
+    # Type of the output argument for which this formula calculates forward
+    # derivatives
+    var_type: Type
+
+    # Inputs for which the forward derivatives are required for this formula
+    required_inputs_fw_grad: Tuple[str, ...]
+
+    # Inputs for which the primal is required for this formula
+    required_inputs_primal: Optional[Tuple[str, ...]]
 
 # Represents differentiability info for a NativeFunction.
 @dataclass(frozen=True)
@@ -72,7 +98,12 @@ class DifferentiabilityInfo:
     op: Optional[str]
 
     # The derivatives formulae for this function.
+    # Note that the length of this sequence is the number of differentiable inputs
     derivatives: Sequence[Derivative]
+
+    # The forward derivatives formulae for this function.
+    # Note that the length of this sequence is the number of differentiable outputs
+    forward_derivatives: Sequence[ForwardDerivative]
 
     # The union of 'saved_inputs' of all 'derivatives'.
     all_saved_inputs: Sequence[SavedAttribute]
