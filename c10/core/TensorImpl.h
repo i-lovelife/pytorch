@@ -563,6 +563,11 @@ struct C10_API TensorImpl : public c10::intrusive_ptr_target {
     key_set_ = key_set_ - autograd_dispatch_keyset;
   }
 
+  // Inference tensor doesn't have autograd or InplaceOrView key.
+  bool is_inference_tensor() {
+    return !key_set_.has(c10::DispatchKey::InplaceOrView) && (key_set_ & c10::autograd_dispatch_keyset).empty();
+  }
+
   int64_t get_device() const {
     TORCH_CHECK(
         device_opt_.has_value(),
