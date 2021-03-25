@@ -7,11 +7,11 @@ using namespace torch::test;
 
 namespace {
   torch::Tensor functional_op(torch::Tensor& x) {
-    return x + x;
+    return x * x;
   }
 
   void inplace_op(torch::Tensor& x) {
-    x.add_(1);
+    x.mul_(1);
   }
 
   torch::Tensor view_op(torch::Tensor& x) {
@@ -138,12 +138,6 @@ TEST(InferenceModeTest, TestInferenceTensorInNormalModeFunctionalOp) {
     }
     // Functional ops on inference tensors might run slower outside InferenceMode than inside.
     // But it's fine that we don't care about perf of this case that much.
-    //
-    // An alternative behavior we perfer but didn't implement is throwing an error by forcing
-    // this op go through VariableType kernel and hit the assert_no_inference_tensor check.
-    // But to do that we'll have to add c10::autograd_dispatch_keyset to the globally enabled set,
-    // but doing that might accidentally call autograd kernel from a backend that doesn't match tensor input.
-    // Thus we allow functional ops run without throwing an error.
     torch::Tensor tmp = functional_op(inference_tensor); // go through kernels: InplaceOrView(fallthrough), CPU
     ASSERT_FALSE(is_inference_tensor(tmp));
     ASSERT_FALSE(tmp.requires_grad());
@@ -155,22 +149,24 @@ TEST(InferenceModeTest, TestInferenceTensorInNormalModeInplaceOp) {
   for (bool requires_grad: {true, false}) {
     {
       InferenceMode guard;
-      inference_tensor = torch::ones({1, 2, 3});
+      inference_tensor = torch::ones({1, 2, 3}).set_requires_grad(requires_grad);
     }
-    ASSERT_THROWS_WITH(inplace_op(inference_tensor), // go through kernels: InplaceOrView(ERROR!), CPU
-      "inplace/view ops on inference tensor outside InferenceMode");
+    inplace_op(inference_tensor); // go through kernels: InplaceOrView(ERROR!), CPU
+    ASSERT_TRUE(is_inference_tensor(inference_tensor));
+    ASSERT_EQ(inference_tensor.requires_grad(), requires_grad);
   }
 }
 
 TEST(InferenceModeTest, TestInferenceTensorInNormalModeViewOp) {
   torch::Tensor inference_tensor;
-  for (bool requires_grad: {true, false}) {
+  for (bool requires_grad: {true/*, false*/}) {
     {
       InferenceMode guard;
-      inference_tensor = torch::ones({1, 2, 3});
+      inference_tensor = torch::ones({1, 2, 3}).set_requires_grad(requires_grad);
     }
-    ASSERT_THROWS_WITH(view_op(inference_tensor), // go through kernels: InplaceOrView(ERROR!), CPU
-      "inplace/view ops on inference tensor outside InferenceMode")
+    torch::Tensor out = view_op(inference_tensor); // go through kernels: InplaceOrView(ERROR!), CPU
+    ASSERT_TRUE(is_inference_tensor(out));
+    ASSERT_EQ(out.requires_grad(), requires_grad);
   }
 }
 
@@ -192,9 +188,8 @@ TEST(InferenceModeTest, TestNormalTensorInplaceOpInInferenceMode) {
       ASSERT_EQ(a.requires_grad(), requires_grad);
 
       // inplace -> inplace -> view
-      torch::Tensor view_out = view_op(a);
+      torch::Tensor view_out = view_op(a);  // go through kernels: InplaceOrView, CPU
       ASSERT_FALSE(is_inference_tensor(view_out));
-      // WHY??
       ASSERT_EQ(view_out.requires_grad(), requires_grad);
     }
   }
@@ -308,28 +303,46 @@ TEST(InferenceModeTest, TestMixInferenceAndNormalTensorFunctionalOp) {
     torch::Tensor c;
     {
       InferenceMode guard;
-      c = torch::ones({1, 2, 3});
+      c = torch::ones({1, 2, 3}).set_requires_grad(requires_grad);
     }
 
-    ASSERT_THROWS_WITH(c.add(s), // go through kernels: VariableType(ERROR!), InplaceOrView(fallthrough), CPU
-      "Inference tensor cannot participate in autograd")
+    // add(Tensor, Tensor) is safe with inference tensor since it doesn't save any variable for backward.
+    torch::Tensor out = c.add(s);  // go through kernels: VariableType, InplaceOrView(fallthrough), CPU
+    ASSERT_FALSE(is_inference_tensor(out));
+    ASSERT_EQ(out.requires_grad(), requires_grad);
+
+    // mul(self, other) saves variable when requires_grad=true
+    if (requires_grad) {
+      ASSERT_THROWS_WITH(c.mul(s),
+        "Inference tensors cannot be saved for backward.");
+    }
   }
 }
 
 TEST(InferenceModeTest, TestMixInferenceAndNormalTensorInplaceOp) {
   for (bool requires_grad: {true, false}) {
     torch::Tensor s = torch::ones({1, 2, 3}).set_requires_grad(requires_grad);
+    torch::Tensor a = s + 2;
     torch::Tensor c;
     {
       InferenceMode guard;
       c = torch::ones({1, 2, 3});
     }
 
-    ASSERT_THROWS_WITH(c.add_(s), // go through kernels: VariableType(ERROR!), InplaceOrView, CPU
-      "Inference tensor cannot participate in autograd")
+    if (requires_grad) {
+      ASSERT_THROWS_WITH(a.mul_(c), // go through kernels: VariableType, InferenceMode, CPU
+        "Inference tensors cannot be saved for backward.");
 
-    ASSERT_THROWS_WITH(torch::add_out(c, s, s), // go through kernels: VariableType(ERROR!), InplaceOrView, CPU
-      "Inference tensor cannot participate in autograd")
+      ASSERT_THROWS_WITH(torch::mul_out(c, s, s), // go through kernels: VariableType, InplaceOrView, CPU
+        "out=... arguments don't support automatic differentiation, but one of the arguments requires grad")
+    } else {
+      a.mul_(c);
+
+      // out=... doesn't save any variable and works as long as none of inputs requires_grad=true
+      torch::mul_out(c, s, s);
+      ASSERT_TRUE(is_inference_tensor(c));
+      ASSERT_EQ(c.requires_grad(), requires_grad);
+    }
   }
 }
 
@@ -344,8 +357,7 @@ TEST(InferenceModeTest, TestMixInferenceAndNormalTensorViewOp) {
 
     // view_as is a composite op which calls view() with only one tensor argument.
     // So there isn't a mixed inference tensor and normal tensor inputs for view ops.
-    ASSERT_THROWS_WITH(c.view_as(s), // go through kernels: InplaceOrView(ERROR!), CPU
-      "inplace/view ops on inference tensor outside InferenceMode")
+    c.view_as(s); // go through kernels: InplaceOrView, CPU
 
     // This is fine since it's equivalent as s.view(c.sizes()) which
     // isn't a mixed input scenario.

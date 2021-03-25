@@ -341,7 +341,7 @@ struct C10_API TensorImpl : public c10::intrusive_ptr_target {
   TensorImpl(
       Storage&& storage,
       DispatchKeySet,
-      const caffe2::TypeMeta data_type);
+      const caffe2::TypeMeta data_type, bool is_view=false);
 
   /**
    * Construct a 1-dim 0 size tensor that doesn't have a storage.
@@ -366,7 +366,7 @@ struct C10_API TensorImpl : public c10::intrusive_ptr_target {
   // storage.  Still, we pass it in separately because it's easier to write
   // the initializer list if we're not worried about storage being moved out
   // from under us.
-  TensorImpl(Storage&& storage, DispatchKeySet, const caffe2::TypeMeta data_type, c10::optional<c10::Device>);
+  TensorImpl(Storage&& storage, DispatchKeySet, const caffe2::TypeMeta data_type, c10::optional<c10::Device>, bool is_view=false);
 
  public:
   TensorImpl(const TensorImpl&) = delete;
